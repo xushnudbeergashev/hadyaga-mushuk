@@ -143,6 +143,8 @@ function adminIds(env) {
 const isAdmin = (env, id) => adminIds(env).includes(Number(id));
 
 // ---------------------------------------------------------------- Telegram API
+const TG_TIMEOUT = 15000;
+const TG_UPLOAD_TIMEOUT = 90000;
 async function tg(env, method, body) {
   const base = env.TG_API || "https://api.telegram.org";
   const opts = { method: "POST" };
@@ -152,7 +154,19 @@ async function tg(env, method, body) {
     opts.body = JSON.stringify(body || {});
   }
   if (env.__ops) env.__ops.n++; // fon vazifasida so'rovlar sanaladi
-  const r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
+  // Kutish chegarasi: Telegram javob bermay qolsa, so'rov cheksiz osilib qolmasin
+  // (aks holda webhook ham kutib qoladi va Telegram xabarni qayta yuboradi). Fayl yuklashga ko'proq vaqt.
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+    opts.signal = AbortSignal.timeout(Number(env.TG_TIMEOUT_MS) || (body instanceof FormData ? TG_UPLOAD_TIMEOUT : TG_TIMEOUT));
+  }
+  let r;
+  try {
+    r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
+  } catch (e) {
+    const err = new Error(`${method}: ${e.name === "TimeoutError" ? "Telegram javob bermadi (vaqt tugadi)" : e.message}`);
+    err.code = 0; // vaqtincha xato — keyin qayta urinsa bo'ladi
+    throw err;
+  }
   const j = await r.json().catch(() => ({ ok: false, error_code: r.status, description: `HTTP ${r.status}` }));
   if (!j.ok) {
     const e = new Error(`${method}: ${j.description}`);
@@ -176,6 +190,31 @@ const tgSafe = (env, method, body) =>
     console.log(e.message);
     return null;
   });
+
+// Serverdagi kutilmagan xato haqida birinchi adminga Telegram xabari.
+// Bir xil xabar ko'p kelib bezovta qilmasin: 10 daqiqada ko'pi bilan bittasi (Cloudflare keshi orqali).
+const ALERT_EVERY_MS = 10 * 60e3;
+let lastAlertAt = 0;
+async function alertAdmin(env, where, e) {
+  try {
+    const first = adminIds(env)[0];
+    if (!first || !env.BOT_TOKEN) return;
+    if (Date.now() - lastAlertAt < ALERT_EVERY_MS) return;
+    const cache = typeof caches !== "undefined" ? caches.default : null;
+    const key = new Request(`https://hadya.internal/alert/${Math.floor(Date.now() / ALERT_EVERY_MS)}`);
+    if (cache) {
+      if (await cache.match(key)) return;
+      await cache.put(key, new Response("1", { headers: { "cache-control": `max-age=${ALERT_EVERY_MS / 1000}` } }));
+    }
+    lastAlertAt = Date.now();
+    const text = `🛑 Serverda xato: ${where}\n${String((e && (e.stack || e.message)) || e).slice(0, 700)}`;
+    await tg(env, "sendMessage", { chat_id: first, text, disable_notification: true });
+  } catch (x) {
+    console.log("Adminga xato xabari yuborilmadi:", x.message);
+  }
+}
+const isTransient = (e) => e && (e.code === 0 || e.code === 429 || e.code >= 500 ||
+  /network connection lost|timeout|timed out|reset|overloaded|try again/i.test(String(e.message)));
 
 // ---------------------------------------------------------------- baza
 const parseRow = (r) => r && { ...r, data: JSON.parse(r.data), media: JSON.parse(r.media) };
@@ -1553,6 +1592,8 @@ async function apiSubmit(env, request) {
     console.log("Rasmlar yuklanmadi:", e.message);
     await env.DB.prepare("DELETE FROM listings WHERE id=?").bind(id).run();
     if (e.message === "BAD_VIDEO") return err("Video formati mos kelmadi. MP4 video yoki rasm yuboring.");
+    // Foydalanuvchi rasm yubora olmadi — admin darhol bilsin (masalan, admin botni bloklagan bo'lsa)
+    await alertAdmin(env, "rasm yuklash", e);
     // Adminga aniq sabab ko'rsatiladi (masalan, «chat not found» — admin botga /start bosmagan)
     return err("Rasmlarni yuklab bo'lmadi. Birozdan keyin qayta urinib ko'ring." +
       (isAdmin(env, user.id) ? `\n\nSabab (faqat adminga ko'rinadi): ${e.message}` : ""), 500);
@@ -2131,6 +2172,7 @@ async function scheduledJobs(baseEnv) {
       await job(env);
     } catch (e) {
       console.log(`Cron (${name}):`, e.stack || e.message);
+      if (!isTransient(e)) await alertAdmin(baseEnv, `cron: ${name}`, e);
     }
   }
   console.log(`Cron: ${ops.n} ta so'rov ishlatildi (chegara ${RUN_BUDGET})`);
@@ -2253,6 +2295,7 @@ export default {
         else if (u.channel_post) await onChannelPost(env, u.channel_post);
       } catch (e) {
         console.log("Update xatosi:", e.stack || e.message);
+        if (!isTransient(e)) ctx.waitUntil(alertAdmin(env, "bot", e));
       }
       return new Response("ok");
     }
@@ -2300,6 +2343,7 @@ export default {
       return new Response("Topilmadi", { status: 404 });
     } catch (e) {
       console.log("Xato:", path, e.stack || e.message);
+      if (!isTransient(e)) ctx.waitUntil(alertAdmin(env, path, e));
       if (String(e.message).includes("no such table")) return err("Bot hali sozlanmagan: /setup?key=... sahifasini oching.", 503);
       const who = await authUser(env, request.headers.get("x-init-data")).catch(() => null);
       return err("Server xatosi. Birozdan keyin qayta urinib ko'ring." +

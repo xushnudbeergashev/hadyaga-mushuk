@@ -42,8 +42,14 @@ const failSend = new Map();
 let failGroup = false, failPhoto = false; // sendMediaGroup / sendPhoto xatosini taqlid qilish
 const lastCall = (method) => [...calls].reverse().find((c) => c.method === method);
 const callsOf = (method) => calls.filter((c) => c.method === method);
+let hang = null; // shu metod Telegram'da «osilib qoladi» (javob kelmaydi)
 globalThis.fetch = async (url, opts = {}) => {
   url = String(url);
+  if (hang && url.endsWith("/" + hang)) {
+    // AbortSignal.timeout taymeri Node'da jarayonni ushlab turmaydi — test tugab qolmasin
+    const keep = setTimeout(() => {}, 5000);
+    return new Promise((_, rej) => opts.signal?.addEventListener("abort", () => (clearTimeout(keep), rej(opts.signal.reason))));
+  }
   if (url.includes("/file/bot")) return ++downloads,  new Response("IMAGE-BYTES", { status: 200, headers: { "content-length": "11" } });
   const method = url.split("/").pop();
   let body = {};
@@ -718,6 +724,22 @@ test("rasm umuman yuklanmasa: e'lon saqlanmaydi, adminga aniq sabab ko'rsatiladi
   assert.doesNotMatch(user.error, /Sabab/);
   assert.match(admin.error, /Sabab \(faqat adminga ko'rinadi\): .*chat not found/);
   assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS n FROM listings WHERE user_id IN (912, ?) AND status='pending'").get(ADMIN).n, 0);
+  // adminga darhol xabar boradi (10 daqiqada bittadan ko'p emas)
+  const alerts = callsOf("sendMessage").filter((c) => String(c.body.text).startsWith("🛑 Serverda xato: rasm yuklash"));
+  assert.equal(alerts.length, 1);
+  assert.equal(Number(alerts[0].body.chat_id), ADMIN);
+});
+
+test("Telegram javob bermasa: so'rov osilib qolmaydi, vaqt tugagach xato qaytadi", async () => {
+  env.TG_TIMEOUT_MS = "50";
+  hang = "sendMediaGroup";
+  const t0 = Date.now();
+  const j = await reqJson("/api/submit", { method: "POST", body: hadyaForm({ __user: { id: 913, first_name: "Kutgan" }, phone: "+998901234567" }) });
+  hang = null;
+  delete env.TG_TIMEOUT_MS;
+  // albom osildi → rasm alohida yuklandi, e'lon qabul qilindi
+  assert.equal(j.ok, true, j.error);
+  assert.ok(Date.now() - t0 < 3000);
 });
 
 test("STORAGE_CHAT havola bo'lsa: e'tiborsiz qoldiriladi, rasm admin chatiga yuklanadi; /chatid ID'ni aytadi", async () => {
