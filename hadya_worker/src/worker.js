@@ -151,15 +151,22 @@ async function tg(env, method, body) {
     opts.headers = { "content-type": "application/json" };
     opts.body = JSON.stringify(body || {});
   }
-  if (env.__ops) env.__ops.n++; // fon vazifasida so'rovlar sanaladi
-  const r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
-  const j = await r.json().catch(() => ({ ok: false, error_code: r.status, description: `HTTP ${r.status}` }));
-  if (!j.ok) {
+  for (let attempt = 0; ; attempt++) {
+    if (env.__ops) env.__ops.n++; // fon vazifasida so'rovlar sanaladi
+    const r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
+    const j = await r.json().catch(() => ({ ok: false, error_code: r.status, description: `HTTP ${r.status}` }));
+    if (j.ok) return j.result;
+    // 429 «Too Many Requests»: Telegram so'rovni bajarmagan, «N soniyadan keyin» deydi. Qisqa bo'lsa kutib,
+    // bir marta qayta yuboramiz (aks holda rasm yuklash yoki javob xabari shunchaki yo'qolardi).
+    const wait = Number(j.parameters?.retry_after) || 0;
+    if (j.error_code === 429 && attempt === 0 && wait > 0 && wait <= 5) {
+      await new Promise((res) => setTimeout(res, wait * 1000));
+      continue;
+    }
     const e = new Error(`${method}: ${j.description}`);
     e.code = j.error_code || 0; // 403 — foydalanuvchi botni bloklagan; 429/5xx — vaqtincha xato
     throw e;
   }
-  return j.result;
 }
 // Xabar yuborish natijasi: { ok: true } | { ok: false, blocked: true/false }.
 // blocked — doimiy xato (bot bloklangan yoki akkaunt o'chirilgan); aks holda keyinroq qayta urinish mumkin.
@@ -176,6 +183,32 @@ const tgSafe = (env, method, body) =>
     console.log(e.message);
     return null;
   });
+
+// Kutilmagan xato — adminga Telegram'da qisqa xabar (10 daqiqada ko'pi bilan 1 ta, bezovta qilmasin).
+// Muammoni foydalanuvchi shikoyat qilishidan oldin bilib olasiz. Xabar yuborilmasa ham asosiy ish to'xtamaydi.
+let lastAlertAt = 0;
+const ALERT_EVERY = 10 * 60 * 1000;
+async function alertAdmins(env, where, e) {
+  try {
+    const t = Date.now();
+    if (t - lastAlertAt < ALERT_EVERY) return;
+    lastAlertAt = t;
+    // Bir nechta Worker nusxasi bir vaqtda ishlaydi — umumiy cheklov bazada (baza o'zi ishlamasa ham xabar ketadi)
+    const prev = Number(await getSetting(env, "last_error_alert").catch(() => 0)) || 0;
+    if (t - prev < ALERT_EVERY) return;
+    await setSetting(env, "last_error_alert", String(t)).catch(() => {});
+    const msg = String((e && (e.message || e)) || "").slice(0, 300);
+    for (const id of adminIds(env).slice(0, 2)) {
+      await tgSafe(env, "sendMessage", {
+        chat_id: id,
+        text: `⚠️ Botda xato (${where}):\n${msg}\n\nKeyingi 10 daqiqadagi xatolar haqida yozilmaydi. Batafsil: Cloudflare → Workers → Logs.`,
+        disable_notification: true,
+      });
+    }
+  } catch (err) {
+    console.log("Ogohlantirish yuborilmadi:", err.message);
+  }
+}
 
 // ---------------------------------------------------------------- baza
 const parseRow = (r) => r && { ...r, data: JSON.parse(r.data), media: JSON.parse(r.media) };
@@ -1551,6 +1584,7 @@ async function apiSubmit(env, request) {
     await storeMedia(env, await getListing(env, id), files);
   } catch (e) {
     console.log("Rasmlar yuklanmadi:", e.message);
+    if (e.message !== "BAD_VIDEO") await alertAdmins(env, "rasm yuklash", e);
     await env.DB.prepare("DELETE FROM listings WHERE id=?").bind(id).run();
     if (e.message === "BAD_VIDEO") return err("Video formati mos kelmadi. MP4 video yoki rasm yuboring.");
     // Adminga aniq sabab ko'rsatiladi (masalan, «chat not found» — admin botga /start bosmagan)
@@ -2131,6 +2165,7 @@ async function scheduledJobs(baseEnv) {
       await job(env);
     } catch (e) {
       console.log(`Cron (${name}):`, e.stack || e.message);
+      await alertAdmins(env, `cron: ${name}`, e);
     }
   }
   console.log(`Cron: ${ops.n} ta so'rov ishlatildi (chegara ${RUN_BUDGET})`);
@@ -2253,6 +2288,7 @@ export default {
         else if (u.channel_post) await onChannelPost(env, u.channel_post);
       } catch (e) {
         console.log("Update xatosi:", e.stack || e.message);
+        ctx.waitUntil(alertAdmins(env, "bot", e));
       }
       return new Response("ok");
     }
@@ -2300,6 +2336,7 @@ export default {
       return new Response("Topilmadi", { status: 404 });
     } catch (e) {
       console.log("Xato:", path, e.stack || e.message);
+      ctx.waitUntil(alertAdmins(env, `${method} ${path}`, e));
       if (String(e.message).includes("no such table")) return err("Bot hali sozlanmagan: /setup?key=... sahifasini oching.", 503);
       const who = await authUser(env, request.headers.get("x-init-data")).catch(() => null);
       return err("Server xatosi. Birozdan keyin qayta urinib ko'ring." +
