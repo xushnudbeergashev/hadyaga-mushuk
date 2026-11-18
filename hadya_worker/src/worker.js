@@ -153,7 +153,19 @@ async function tg(env, method, body) {
   }
   for (let attempt = 0; ; attempt++) {
     if (env.__ops) env.__ops.n++; // fon vazifasida so'rovlar sanaladi
-    const r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
+    // Kutish chegarasi: Telegram javob bermay qolsa, so'rov (va webhook) cheksiz osilib qolmasin.
+    // Fayl yuklashga ko'proq vaqt beriladi.
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+      opts.signal = AbortSignal.timeout(Number(env.TG_TIMEOUT_MS) || (body instanceof FormData ? 90000 : 15000));
+    }
+    let r;
+    try {
+      r = await fetch(`${base}/bot${env.BOT_TOKEN}/${method}`, opts);
+    } catch (e) {
+      const err = new Error(`${method}: ${e.name === "TimeoutError" ? "Telegram javob bermadi (vaqt tugadi)" : e.message}`);
+      err.code = 0; // vaqtincha xato
+      throw err;
+    }
     const j = await r.json().catch(() => ({ ok: false, error_code: r.status, description: `HTTP ${r.status}` }));
     if (j.ok) return j.result;
     // 429 «Too Many Requests»: Telegram so'rovni bajarmagan, «N soniyadan keyin» deydi. Qisqa bo'lsa kutib,
