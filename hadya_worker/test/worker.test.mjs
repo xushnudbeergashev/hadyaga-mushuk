@@ -40,6 +40,7 @@ let msgId = 1000;
 // chat_id → { code, description }: shu foydalanuvchiga sendMessage xato qaytaradi
 const failSend = new Map();
 let failGroup = false, failPhoto = false; // sendMediaGroup / sendPhoto xatosini taqlid qilish
+let group429 = 0; // shuncha marta sendMediaGroup «429 Too Many Requests, 1 s kuting» qaytaradi
 const lastCall = (method) => [...calls].reverse().find((c) => c.method === method);
 const callsOf = (method) => calls.filter((c) => c.method === method);
 globalThis.fetch = async (url, opts = {}) => {
@@ -52,6 +53,10 @@ globalThis.fetch = async (url, opts = {}) => {
     if (body.media) body.media = JSON.parse(body.media);
   } else if (opts.body) body = JSON.parse(opts.body);
   calls.push({ method, body });
+  if (method === "sendMediaGroup" && group429 > 0) {
+    group429--;
+    return new Response(JSON.stringify({ ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } }), { status: 429 });
+  }
   const ok = (result) => new Response(JSON.stringify({ ok: true, result }));
   if ((failGroup && method === "sendMediaGroup") || (failPhoto && method === "sendPhoto")) {
     return new Response(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: chat not found" }), { status: 400 });
@@ -718,6 +723,26 @@ test("rasm umuman yuklanmasa: e'lon saqlanmaydi, adminga aniq sabab ko'rsatiladi
   assert.doesNotMatch(user.error, /Sabab/);
   assert.match(admin.error, /Sabab \(faqat adminga ko'rinadi\): .*chat not found/);
   assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS n FROM listings WHERE user_id IN (912, ?) AND status='pending'").get(ADMIN).n, 0);
+});
+
+test("Telegram «429, 1 s kuting» desa: kutib, albomni qayta yuboradi", async () => {
+  const before = callsOf("sendMediaGroup").length;
+  group429 = 1;
+  const j = await reqJson("/api/submit", { method: "POST", body: hadyaForm({ __user: { id: 913, first_name: "Kamol" }, phone: "+998901234567" }) });
+  assert.equal(j.ok, true, j.error);
+  assert.equal(group429, 0);
+  assert.equal(callsOf("sendMediaGroup").length - before, 2);
+  assert.equal(JSON.parse(row(j.id).media).length, 1);
+});
+
+test("kutilmagan xato adminga Telegram'da yoziladi, lekin 10 daqiqada ko'pi bilan 1 marta", async () => {
+  const alerts = () => callsOf("sendMessage").filter((c) => Number(c.body.chat_id) === ADMIN && /Botda xato/.test(c.body.text));
+  // oldingi testda rasm yuklanmadi — shu haqida ogohlantirish ketgan, ikkinchi xato esa yozilmagan
+  assert.equal(alerts().length, 1);
+  failGroup = true; failPhoto = true;
+  await reqJson("/api/submit", { method: "POST", body: hadyaForm({ __user: { id: 914, first_name: "Dilshod" }, phone: "+998901234567" }) });
+  failGroup = failPhoto = false;
+  assert.equal(alerts().length, 1);
 });
 
 test("STORAGE_CHAT havola bo'lsa: e'tiborsiz qoldiriladi, rasm admin chatiga yuklanadi; /chatid ID'ni aytadi", async () => {
