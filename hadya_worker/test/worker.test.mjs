@@ -43,8 +43,14 @@ let failGroup = false, failPhoto = false; // sendMediaGroup / sendPhoto xatosini
 let group429 = 0; // shuncha marta sendMediaGroup «429 Too Many Requests, 1 s kuting» qaytaradi
 const lastCall = (method) => [...calls].reverse().find((c) => c.method === method);
 const callsOf = (method) => calls.filter((c) => c.method === method);
+let hang = null; // shu metod Telegram'da «osilib qoladi» (javob kelmaydi)
 globalThis.fetch = async (url, opts = {}) => {
   url = String(url);
+  if (hang && url.endsWith("/" + hang)) {
+    // AbortSignal.timeout taymeri Node'da jarayonni ushlab turmaydi — test tugab qolmasin
+    const keep = setTimeout(() => {}, 5000);
+    return new Promise((_, rej) => opts.signal?.addEventListener("abort", () => (clearTimeout(keep), rej(opts.signal.reason))));
+  }
   if (url.includes("/file/bot")) return ++downloads,  new Response("IMAGE-BYTES", { status: 200, headers: { "content-length": "11" } });
   const method = url.split("/").pop();
   let body = {};
@@ -811,4 +817,15 @@ test("forma: «Instagram'ga ham joylansin» olib tashlansa no_ig belgisi saqlana
   const j = await reqJson("/api/submit", { method: "POST", body: hadyaForm({ __user: u, ig: "0", phone: "+998 90 111 22 33" }) });
   assert.equal(j.ok, true, j.error);
   assert.equal(JSON.parse(row(j.id).data).no_ig, true);
+});
+
+test("Telegram javob bermasa: so'rov osilib qolmaydi, albom o'rniga rasm alohida yuklanadi", async () => {
+  env.TG_TIMEOUT_MS = "50";
+  hang = "sendMediaGroup";
+  const t0 = Date.now();
+  const j = await reqJson("/api/submit", { method: "POST", body: hadyaForm({ __user: { id: 913, first_name: "Kutgan" }, phone: "+998901234567" }) });
+  hang = null;
+  delete env.TG_TIMEOUT_MS;
+  assert.equal(j.ok, true, j.error);
+  assert.ok(Date.now() - t0 < 3000);
 });
