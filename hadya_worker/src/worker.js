@@ -747,7 +747,7 @@ async function reopenListing(env, l) {
 // ---------------------------------------------------------------- kanaldagi postlarni ilovaga qo'shish
 // Telegram botlarga kanalning eski postlarini o'qishga ruxsat bermaydi. Shuning uchun:
 //  1) admin eski postni botga forward qiladi → bot matnini tahlil qilib ilovaga qo'shadi;
-//  2) kanalga qo'lda joylangan yangi postlar (channel_post) avtomatik qo'shiladi.
+//  (kanalga joylangan yangi postlar avtomatik qo'shilmaydi.)
 const normTxt = (s) => String(s || "").toLowerCase().replace(/[ʻʼ'‘’`´]/g, "").replace(/_/g, " ");
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const wordIn = (hay, key) => new RegExp(`(^|[^a-z0-9])${reEsc(key)}([^a-z0-9]|$)`).test(hay);
@@ -1008,17 +1008,10 @@ async function getDoneMode(env, adminId) {
   return until > now();
 }
 
-// Kanalga admin o'zi joylagan post ilovaga FAQAT e'lon bo'lsa qo'shiladi: rasm/video bo'lishi va matnida
-// #hadyaga, #sotiladi yoki #reklama hashtagi bo'lishi shart. Oddiy xabarlar («Assalomu alaykum...»,
-// e'lonlar, reklama bo'lmagan postlar) e'tiborsiz qoldiriladi.
+// Kanalga joylangan postlar ilovaga avtomatik QO'SHILMAYDI (foydalanuvchi talabi). Kanal postini ilovaga
+// qo'shish uchun admin uni botga forward qiladi. Kanalda faqat /chatid buyrug'iga javob beriladi.
 async function onChannelPost(env, m) {
   if (/^\/chatid(@\w+)?$/i.test((m.text || "").trim())) return replyChatId(env, m.chat, m.message_id);
-  const ch = String(env.CHANNEL || "").replace(/^@/, "").toLowerCase();
-  if ((m.chat.username || "").toLowerCase() !== ch && String(m.chat.id) !== String(env.CHANNEL)) return;
-  if (m.media_group_id && !m.caption) return attachAlbumItem(env, m);
-  if (!m.photo && !m.video) return;
-  if (!kindByTags(m.caption || "")) return;
-  await importPost(env, m, m.message_id, m.chat.username, m.date, false, true);
 }
 
 // ---------------------------------------------------------------- bot: xabarlar

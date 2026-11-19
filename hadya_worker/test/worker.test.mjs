@@ -374,7 +374,7 @@ test("import qilingan post yopilganda formatlash (entities) saqlanadi", async ()
   const bold = { type: "bold", offset: text.indexOf("Chiroyli"), length: "Chiroyli mushukcha".length };
   const link = { type: "text_link", offset: text.indexOf("juda"), length: 4, url: "https://x.uz" };
   const phoneEnt = { type: "phone_number", offset: text.indexOf("+998"), length: 13 };
-  await tgUpdate({ channel_post: { message_id: 77, date: 1700000000, chat: { id: -100, username: "Hadyagamushuklar" },
+  await tgUpdate({ message: { message_id: 77, from: ADM, chat: { id: ADMIN, type: "private" }, forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: 77, date: 1700000000 },
     photo: [{ file_id: "a" }, { file_id: "b" }], caption: text, caption_entities: [bold, link, phoneEnt] } });
   const l = env.DB.raw.prepare("SELECT * FROM listings WHERE channel_msg_id=77").get();
   assert.equal(JSON.parse(l.data).entities.length, 3);
@@ -599,7 +599,7 @@ test("admin: tahrirlash — ma'lumot va kanaldagi post yangilanadi", async () =>
 
 test("admin: import qilingan postning matnini tahrirlash", async () => {
   const text = "#hadyaga\nMushukcha beriladi\nManzil: Chilonzor\n📞 +998901234567";
-  await tgUpdate({ channel_post: { message_id: 4242, date: T(), chat: { id: -100, username: "Hadyagamushuklar" },
+  await tgUpdate({ message: { message_id: 4242, from: ADM, chat: { id: ADMIN, type: "private" }, forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: 4242, date: T() },
     photo: [{ file_id: "x" }], caption: text, caption_entities: [{ type: "bold", offset: 9, length: 18 }] } });
   const l = env.DB.raw.prepare("SELECT * FROM listings WHERE channel_msg_id=4242").get();
   const j = await reqJson(`/api/admin/listings/${l.id}/edit`, { method: "POST", user: ADM,
@@ -624,7 +624,7 @@ test("admin: o'chirish — ilovadan olinadi, so'ralsa kanaldagi post ham o'chiri
   assert.match(again.error, /topilmadi/);
 });
 
-test("kanal: oddiy post (salomlashish, kanal nomi) e'lon bo'lib qo'shilmaydi; #hadyaga bilan qo'shiladi", async () => {
+test("kanal postlari avtomatik qo'shilmaydi; faqat admin forward qilgan e'lon qo'shiladi", async () => {
   const count = () => env.DB.raw.prepare("SELECT COUNT(*) AS n FROM listings").get().n;
   const post = (id, caption) => tgUpdate({ channel_post: { message_id: id, date: T(), chat: { id: -100, username: "Hadyagamushuklar" },
     photo: [{ file_id: "p" + id }], caption } });
@@ -633,9 +633,12 @@ test("kanal: oddiy post (salomlashish, kanal nomi) e'lon bo'lib qo'shilmaydi; #h
   await post(5002, "Bugun bepul vaktsina aksiyasi! #yangilik");
   await post(5003, "Kanalimiz #hadyagamushuklar ga obuna bo'ling");
   await tgUpdate({ channel_post: { message_id: 5004, date: T(), chat: { id: -100, username: "Hadyagamushuklar" }, text: "#hadyaga matnli post" } });
-  assert.equal(count(), n, "e'lon bo'lmagan postlar qo'shilmadi");
   await post(5005, "#hadyaga\nMushukcha beriladi\nManzil: Yunusobod");
-  assert.equal(count(), n + 1);
+  assert.equal(count(), n, "kanal postlari (e'lon bo'lsa ham) avtomatik qo'shilmaydi");
+  await tgUpdate({ message: { message_id: 8, from: ADM, chat: { id: ADMIN, type: "private" }, photo: [{ file_id: "p5005" }],
+    caption: "#hadyaga\nMushukcha beriladi\nManzil: Yunusobod",
+    forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: 5005, date: T() } } });
+  assert.equal(count(), n + 1, "admin forward qilsa qo'shiladi");
   // admin forward qilsa ham kanal nomidagi «hadya» so'zi e'lon turi deb hisoblanmaydi
   await tgUpdate({ message: { message_id: 9, from: ADM, chat: { id: ADMIN, type: "private" }, caption: "Salom! Kanal: @Hadyagamushuklar",
     photo: [{ file_id: "q" }], forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: 5006, date: T() } } });
