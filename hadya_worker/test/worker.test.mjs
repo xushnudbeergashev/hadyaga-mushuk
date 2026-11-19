@@ -640,7 +640,17 @@ test("kanal: oddiy post (salomlashish, kanal nomi) e'lon bo'lib qo'shilmaydi; #h
   await tgUpdate({ message: { message_id: 9, from: ADM, chat: { id: ADMIN, type: "private" }, caption: "Salom! Kanal: @Hadyagamushuklar",
     photo: [{ file_id: "q" }], forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: 5006, date: T() } } });
   assert.match(lastCall("sendMessage").body.text, /Turi aniqlanmadi/);
-  assert.equal(count(), n + 1);
+  const fwd = (id, extra) => tgUpdate({ message: { message_id: id, from: ADM, chat: { id: ADMIN, type: "private" }, ...extra,
+    forward_origin: { type: "channel", chat: { id: -100, username: "Hadyagamushuklar" }, message_id: id + 6000, date: T() } } });
+  // hashtagsiz oddiy xabarlar: «bepul», «Hadyaga mushuklar», «narx» so'zlari bo'lsa ham qo'shilmaydi
+  await fwd(10, { photo: [{ file_id: "q1" }], caption: "Hadyaga mushuklar kanaliga xush kelibsiz!" });
+  await fwd(11, { photo: [{ file_id: "q2" }], caption: "Bugun bepul vaktsina aksiyasi bo'ladi" });
+  await fwd(12, { photo: [{ file_id: "q3" }], caption: "Mushuk ovqati narxlari oshdi" });
+  await fwd(13, { text: "#hadyaga matnli xabar" });
+  assert.equal(count(), n + 1, "oddiy xabarlar qo'shilmadi");
+  // hashtagsiz, lekin e'lon tuzilishidagi post taxmin qilinadi
+  await fwd(14, { photo: [{ file_id: "q4" }], caption: "Mushukcha bepul beriladi\nManzil: Chilonzor\nYoshi: 2 oy" });
+  assert.equal(count(), n + 2);
 });
 
 // ---------------------------------------------------------------- 4-bosqich: Navbat va tinch soatlar

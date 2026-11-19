@@ -802,9 +802,16 @@ function parsePost(text, skipNames, strict = false) {
   };
   let kind = kindByTags(t);
   if (!kind && !strict) {
-    // @kanal / t.me havolalari va teglar olib tashlanadi — aks holda «@Hadyagamushuklar» ham «hadya» deb topilardi
-    const plain = low.replace(/@[\w.]+|t\.me\/\S+|#\S+/g, " ");
-    kind = /\bhadya|\bbepul|\btekin/.test(plain) ? "hadya" : /\bnarx/.test(plain) ? "sotuv" : null;
+    // Hashtagsiz post faqat e'lon tuzilishiga ega bo'lsa taxmin qilinadi: kamida 2 ta e'lon maydoni
+    // (Manzil:, Zoti:, Yoshi:, Jinsi:, Narxi:, telefon...). Aks holda «Hadyaga mushuklar kanali»,
+    // «bepul vaktsina» kabi oddiy xabarlar ham e'lon bo'lib qolardi.
+    const fields = [/manzil|hudud/, /\bzot/, /\byosh/, /jins/, /narx/, /soglig/, /dosta?[fv]ka|yetkaz/]
+      .filter((re) => field(re)).length + (/(\+?998)?\d{9}/.test(t.replace(/[\s()-]/g, "")) ? 1 : 0);
+    if (fields >= 2) {
+      // @kanal / t.me havolalari va teglar olib tashlanadi — aks holda «@Hadyagamushuklar» ham «hadya» deb topilardi
+      const plain = low.replace(/@[\w.]+|t\.me\/\S+|#\S+|hadyaga mushuklar/g, " ");
+      kind = /\bhadya|\bbepul|\btekin/.test(plain) ? "hadya" : /\bnarx/.test(plain) ? "sotuv" : null;
+    }
   }
   if (!kind) return null;
 
@@ -936,6 +943,8 @@ async function importPost(env, m, chMsgId, chUsername, date, doneMode = false, s
     }
     return { dup };
   }
+  // E'lon har doim rasm yoki video bilan bo'ladi: matnli postlar (yangilik, salomlashish) qo'shilmaydi
+  if (!mediaOf(m).length) return { error: "Bu e'lon emas: rasm yoki video yo'q." };
   const text = m.caption || m.text || "";
   const skip = [await botUsername(env), String(env.CHANNEL || "").replace(/^@/, "")];
   const p = parsePost(text, skip, strict);
