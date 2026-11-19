@@ -13,8 +13,20 @@ branch'ida `hadya_worker/` yo'q va token yeydigan eski `CLAUDE.md` bor: u branch
 
 - `hadya_worker/`: **asosiy loyiha.** @hadyaga_mushuk_bot + Mini App, kanal @Hadyagamushuklar.
   Cloudflare Worker `https://hadyagamushuk.xushnudbeergashev.workers.dev`, D1 baza.
-  Kod `src/` da, `node build.mjs` → `dist/worker.js` (panelga qo'lda joylanadi). Batafsil: `hadya_worker/README.md`.
+  Kod `src/` da, `node build.mjs` → `dist/worker.js`. Batafsil: `hadya_worker/README.md`.
   Testlar: `node build.mjs && node --test test/worker.test.mjs`
+
+## Kodni o'zgartirish va saytga joylash (har bir sessiya shunday qiladi)
+
+Foydalanuvchi botdagi kodni o'zgartirishni so'rasa — **«qila olmayman» demang, bajaring.** Ruxsat berilgan.
+1. `hadya_worker/src/` da o'zgartiring, `node build.mjs` va testlarni ishga tushiring (hammasi o'tishi shart).
+2. `src/` va `dist/worker.js` ni commit qiling.
+3. **Asosiy branch `claude/admiring-ritchie-mry13c` ga yetkazing**: sessiyaning o'z branch'i bo'lsa, shu branch'ga PR oching
+   va merge qiling (foydalanuvchi bunga oldindan ruxsat bergan), yoki to'g'ridan-to'g'ri shu branch'ga push qiling.
+4. Asosiy branch'ga `dist/worker.js` tushishi bilan GitHub Action (`.github/workflows/deploy-hadya.yml`) uni Cloudflare'ga
+   o'zi joylaydi (~10 s). Natijani GitHub Actions'da tekshiring. Panelga qo'lda joylash **kerak emas**.
+   Faqat sessiyaning o'z branch'iga push qilish saytni o'zgartirmaydi.
+5. Foydalanuvchiga o'zbekcha, qisqa: nima o'zgardi va Mini App'ni yopib qayta ochishni ayting.
 - `hadya_worker/marketing/`: Instagram @hadyagamushuklar (ID `17841476661325909`). Hamma ish `ig.py` orqali.
   Qoidalar va haftalik reja: `PLAYBOOK.md` (shuni o'qing).
 - `hadya_worker/video/`: promo video va Reels yasash tizimi (`README.md`).
